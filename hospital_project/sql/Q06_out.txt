@@ -1,0 +1,24 @@
+info
+=== Q6: Κανονική εκτέλεση ===
+hosp_id	admission	discharge	adm_icd10	adm_diagnosis	dis_icd10	dis_diagnosis	total_cost	overall_score	avg_overall_for_patient
+627	2022-03-04 04:31:00	2022-03-07 21:31:00	Y56.5	Οφθαλμολογικά φάρμακα και σκευάσματα	X92	Επίθεση με πνιγμό και εμβύθιση	5663.61	NULL	3.00
+495	2023-05-19 15:19:00	2023-05-28 11:19:00	D81.4	Σύνδρομο Nezelof	O92	Άλλες διαταραχές του μαστού και της γαλουχίας συνδεόμενες με τον τοκετό	1137.62	4	3.00
+261	2023-09-27 20:51:00	2023-10-27 01:51:00	P72.2	Άλλες παροδικές νεογνικές διαταραχές της λειτουργίας του θυρεοειδούς, που δεν ταξινομούνται αλλού	I25.6	Σιωπηρή ισχαιμία του μυοκαρδίου	6935.34	2	3.00
+416	2023-10-05 03:25:00	2023-10-13 15:25:00	Q13.0	Κολόβωμα της ίριδας	B21.7	Νόσος HIV που καταλήγει σε πολλαπλά κακοήθη νεοπλάσματα	3229.72	3	3.00
+info
+=== EXPLAIN (κανονική) ===
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	SIMPLE	h	ref	idx_hosp_patient_amka	idx_hosp_patient_amka	8	const	4	
+1	SIMPLE	r	eq_ref	uq_rating_hosp	uq_rating_hosp	4	ygeiopolis_db.h.hospitalization_id	1	
+info
+=== Q6: Εκτέλεση με FORCE INDEX ===
+hosp_id	admission	discharge	adm_icd10	adm_diagnosis	dis_icd10	dis_diagnosis	total_cost	overall_score
+627	2022-03-04 04:31:00	2022-03-07 21:31:00	Y56.5	Οφθαλμολογικά φάρμακα και σκευάσματα	X92	Επίθεση με πνιγμό και εμβύθιση	5663.61	NULL
+495	2023-05-19 15:19:00	2023-05-28 11:19:00	D81.4	Σύνδρομο Nezelof	O92	Άλλες διαταραχές του μαστού και της γαλουχίας συνδεόμενες με τον τοκετό	1137.62	4
+261	2023-09-27 20:51:00	2023-10-27 01:51:00	P72.2	Άλλες παροδικές νεογνικές διαταραχές της λειτουργίας του θυρεοειδούς, που δεν ταξινομούνται αλλού	I25.6	Σιωπηρή ισχαιμία του μυοκαρδίου	6935.34	2
+416	2023-10-05 03:25:00	2023-10-13 15:25:00	Q13.0	Κολόβωμα της ίριδας	B21.7	Νόσος HIV που καταλήγει σε πολλαπλά κακοήθη νεοπλάσματα	3229.72	3
+info
+=== EXPLAIN (FORCE INDEX) ===
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	SIMPLE	h	ref	idx_hosp_patient_amka	idx_hosp_patient_amka	8	const	4	
+1	SIMPLE	r	eq_ref	uq_rating_hosp	uq_rating_hosp	4	ygeiopolis_db.h.hospitalization_id	1	

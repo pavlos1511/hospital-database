@@ -1,0 +1,22 @@
+info
+=== Q4: Κανονική εκτέλεση ===
+doctor_amka	first_name	last_name	total_ratings	avg_medical_care	avg_overall_experience
+89830289645	Δήμητρα	Παππά	15	2.53	2.80
+info
+=== EXPLAIN ANALYZE (κανονική) ===
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	SIMPLE	d	const	PRIMARY	PRIMARY	8	const	1	Using index
+1	SIMPLE	s	const	PRIMARY	PRIMARY	8	const	1	
+1	SIMPLE	h	ref	PRIMARY,idx_hosp_primary_doctor	idx_hosp_primary_doctor	8	const	17	Using index
+1	SIMPLE	r	eq_ref	uq_rating_hosp	uq_rating_hosp	4	ygeiopolis_db.h.hospitalization_id	1	
+info
+=== Q4: Εκτέλεση με FORCE INDEX ===
+doctor_amka	first_name	last_name	total_ratings	avg_medical_care	avg_overall_experience
+89830289645	Δήμητρα	Παππά	15	2.53	2.80
+info
+=== EXPLAIN ANALYZE (FORCE INDEX) ===
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	SIMPLE	d	const	PRIMARY	PRIMARY	8	const	1	Using index
+1	SIMPLE	s	const	PRIMARY	PRIMARY	8	const	1	
+1	SIMPLE	h	ref	idx_hosp_primary_doctor	idx_hosp_primary_doctor	8	const	17	Using index
+1	SIMPLE	r	eq_ref	uq_rating_hosp	uq_rating_hosp	4	ygeiopolis_db.h.hospitalization_id	1	

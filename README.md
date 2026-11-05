@@ -1,427 +1,82 @@
-# Γενικό Νοσοκομείο «Υγειόπολης» — Σύστημα Διαχείρισης
+# Hospital Management Database — "Ygeiopolis" General Hospital
 
-**Εξαμηνιαία Εργασία Βάσεων Δεδομένων 2025–2026**  
-Σχολή Ηλεκτρολόγων Μηχανικών και Μηχανικών Υπολογιστών, ΕΜΠ  
-Εργαστήριο Συστημάτων Βάσεων Γνώσεων και Δεδομένων
+A relational database for managing a general hospital: staff, patients, admissions, triage, lab exams, surgeries, prescriptions and shift scheduling. It is loaded with **real Greek and EU medical reference data** and a **reproducible synthetic dataset**, and comes with a lightweight PHP web interface.
 
+> Semester project for the *Databases* course, School of Electrical & Computer Engineering, National Technical University of Athens (NTUA), Spring 2026.
+> Team: **Pavlos Markopoulos**, **Kyriaki Tertipi**
 
+**Tech stack:** MariaDB 10.4 / MySQL (plain SQL, no ORM) · Python (pandas, openpyxl) · PHP · XAMPP · MySQL Workbench · draw.io
 
-## Περιεχόμενα
+---
 
-1. [Επισκόπηση](#1-επισκόπηση)
-2. [Δομή Αρχείων](#2-δομή-αρχείων)
-3. [Προαπαιτούμενα](#3-προαπαιτούμενα)
-4. [Οδηγίες Εκτέλεσης](#4-οδηγίες-εκτέλεσης)
-5. [Σχεδιαστικές Επιλογές & Παραδοχές](#5-σχεδιαστικές-επιλογές--παραδοχές)
-6. [Πηγές Reference Δεδομένων](#6-πηγές-reference-δεδομένων)
-7. [Indexes & Justification](#7-indexes--justification)
-8. [Triggers & Business Rules](#8-triggers--business-rules)
-9. [Synthetic Data Generation](#9-synthetic-data-generation)
-10. [Επιλογές για κάθε Query](#10-επιλογές-για-κάθε-query)
-11. [Web UI](#11-web-ui)
-12. [Χρήση Εργαλείων AI](#12-χρήση-εργαλείων-ai)
-13. [Επίλογος](#13-επίλογος)
+## Highlights
 
+- **27-table normalized schema** with 27 primary keys, 42 foreign keys, 9 unique and 46 check constraints. Allowed values are enforced with `CHECK` constraints, not `ENUM`.
+- **Business rules enforced by triggers.** Examples:
+  - no prescription of a drug containing a substance the patient is allergic to;
+  - no overlapping surgeries in the same operating room or for the same surgeon;
+  - residents must have a supervising doctor;
+  - patients can rate a stay only after they have been discharged.
+- **Real reference data** from official sources, cleaned and loaded with `LOAD DATA LOCAL INFILE`:
+  - 11,008 ICD-10 diagnoses, 694 DRG-equivalent codes (ΚΕΝ) and 6,608 medical procedures from the Greek Ministry of Health;
+  - 4,697 drugs and 1,526 active substances, filtered for Greece from 161,785 records of the EMA Article 57 dataset.
+- **Deterministic synthetic data generator** in Python (fixed seed). It produces 200 patients, 210 staff, 800 hospitalizations, 1,100 triage records, 1,660 shift assignments and more. The data respects constraints that span many rows, such as rest time between shifts, at most 3 consecutive night shifts, minimum staffing per shift and acyclic supervision chains.
+- **15 analytical SQL queries.** They cover revenue per department and DRG, doctor workload and ratings, patients with repeated admissions, drug-substance co-prescription pairs, triage wait-time statistics and a **recursive CTE** for the supervision hierarchy.
+- **Query optimization.** 49 indexes are designed around the query workload. Two key queries were analyzed with `EXPLAIN` / `EXPLAIN ANALYZE` against `FORCE INDEX` variants.
+- **PHP web UI** for browsing doctors, patients, hospitalizations, lab exams, prescriptions, shifts and query results.
 
+## Data model
 
-## 1. Επισκόπηση
+![E/R diagram](diagrams/ER.png)
 
-Η εργασία υλοποιεί ένα σύστημα βάσης δεδομένων για το Γενικό Νοσοκομείο «Υγειόπολης», σύμφωνα με τις απαιτήσεις της εκφώνησης του μαθήματος Βάσεις Δεδομένων.
+The relational schema is in [`diagrams/relational.png`](diagrams/relational.png), and the MySQL Workbench model is in [`diagrams/relational.mwb`](diagrams/relational.mwb).
 
-Η βάση δεδομένων διαχειρίζεται:
-
-- **Προσωπικό**: ιατρούς, νοσηλευτές και διοικητικό προσωπικό.
-- **Ασθενείς** και στοιχεία επικοινωνίας τους.
-- **Νοσηλείες**, διαγνώσεις εισαγωγής/εξόδου, κόστος νοσηλείας και ΚΕΝ.
-- **Τμήματα**, κλίνες και βάρδιες/εφημερίες.
-- **Triage records** για τη διαλογή ασθενών στα Επείγοντα.
-- **Εργαστηριακές εξετάσεις** και τύπους εξετάσεων.
-- **Ιατρικές πράξεις/επεμβάσεις**, αίθουσες και συμμετέχον προσωπικό.
-- **Φάρμακα**, δραστικές ουσίες, αλλεργίες και συνταγογραφήσεις.
-- **Αξιολογήσεις νοσηλείας** από ασθενείς.
-- **15 SQL queries** που απαντούν στα ζητούμενα της εκφώνησης.
-
-Η υλοποίηση έγινε σε **MariaDB 10.4 μέσω XAMPP**, με χρήση **plain SQL**, χωρίς ORM. Για την παραγωγή synthetic data χρησιμοποιήθηκε Python script, ενώ για την παρουσίαση βασικών δεδομένων και queries δημιουργήθηκε απλό **web UI σε PHP**.
-
-
-
-## 2. Δομή Αρχείων
+## Repository structure
 
 ```text
-hospital_project/
-├── README.md                          (κύρια τεκμηρίωση της εργασίας)
 ├── code/
-│   └── generate_data.py               (Python generator για synthetic data)
-├── web/                               (τοπικό web UI της εφαρμογής)
-│   ├── index.php                      (αρχική σελίδα)
-│   ├── db.php                         (σύνδεση PHP με τη βάση)
-│   ├── about.php                      (πληροφορίες εφαρμογής)
-│   ├── doctors.php                    (ιατροί)
-│   ├── patients.php                   (ασθενείς)
-│   ├── hospitalizations.php           (νοσηλείες)
-│   ├── lab_exams.php                  (εργαστηριακές εξετάσεις)
-│   ├── prescriptions.php              (συνταγογραφήσεις)
-│   ├── shifts.php                     (βάρδιες/εφημερίες)
-│   ├── queries.php                    (βασικά queries)
-│   └── queries_full.php               (όλα τα SQL queries)
-├── diagrams/
-│   ├── ER.drawio.pdf                  (E/R διάγραμμα σε PDF)
-│   ├── ER.drawio.png                  (E/R διάγραμμα σε εικόνα)
-│   ├── relational.mwb                 (MySQL Workbench αρχείο)
-│   └── relational.pdf                 (σχεσιακό διάγραμμα)
-├── docs/
-│   ├── report_db.docx                 (αναφορά εργασίας σε Word)
-│   └── report_db.pdf                  (τελική αναφορά σε PDF)
+│   ├── generate_data.py      # synthetic data generator
+│   └── web/                  # PHP web interface
+├── diagrams/                 # E/R and relational diagrams
+├── docs/                     # full report (PDF/DOCX) and detailed documentation (Greek)
 └── sql/
-    ├── install.sql                    (DDL: schema, constraints, indexes, triggers)
-    ├── load.sql                       (φόρτωση reference και synthetic data)
-    ├── synthetic_data.sql             (παράγεται από το generate_data.py)
-    ├── data/
-    │   ├── icd10.csv                  (Υπ. Υγείας ICD-10 - 11.008 rows)
-    │   ├── ken.csv                    (Υπ. Υγείας ΚΕΝ - 694 rows)
-    │   ├── procedures.csv             (Υπ. Υγείας ιατρικές πράξεις - 6.608 rows)
-    │   ├── lab_exams.csv              (εργαστηριακές εξετάσεις - 2.821 rows)
-    │   ├── drugs.csv                  (EMA Article 57 - 4.697 φάρμακα)
-    │   ├── active_substances.csv      (EMA Article 57 - 1.526 δραστικές ουσίες)
-    │   └── drug_active_substance.csv  (συνδέσεις φαρμάκων-δραστικών ουσιών - 4.860 rows)
-    ├── Q01.sql ... Q15.sql            (15 SQL queries της εκφώνησης)
-    └── Q01_out.txt ... Q15_out.txt    (αποτελέσματα εκτέλεσης των queries)
+    ├── install.sql           # schema: tables, constraints, indexes, triggers
+    ├── load.sql              # loads reference + synthetic data
+    ├── synthetic_data.sql    # generated INSERT statements
+    ├── data/                 # reference CSVs (ICD-10, ΚΕΝ, procedures, lab exams, EMA drugs)
+    └── Q01.sql … Q15.sql     # queries, with outputs in QXX_out.txt
 ```
 
-
-
-## 3. Προαπαιτούμενα
-
-| Εργαλείο | Έκδοση / Περιγραφή | Σκοπός |
-||||
-| MariaDB / MySQL | 10.4+ | Υλοποίηση και εκτέλεση της βάσης δεδομένων |
-| XAMPP | 8.x | Τοπικό περιβάλλον με MariaDB, Apache και phpMyAdmin |
-| Python | 3.8+ | Εκτέλεση του synthetic data generator |
-| pandas / openpyxl | πρόσφατες εκδόσεις | Προεπεξεργασία reference αρχείων |
-| phpMyAdmin ή MySQL CLI | - | Εκτέλεση SQL scripts και queries |
-| PHP | μέσω XAMPP | Εκτέλεση του web UI |
-
-
-
-## 4. Οδηγίες Εκτέλεσης
-
-### 4.1 Δημιουργία schema
-
-Από το root directory του project:
-
-```cmd
-cd C:\db_project\hospital_project
-C:\xampp\mysql\bin\mysql.exe -u root < sql\install.sql
-```
-
-Το `install.sql` δημιουργεί τη βάση `ygeiopolis_db`, τους πίνακες, τα primary keys, foreign keys, constraints, indexes και triggers.
-
-### 4.2 Παραγωγή synthetic data
-
-```cmd
-python code\generate_data.py --data-dir sql\data --out sql\synthetic_data.sql
-```
-
-Το script παράγει το αρχείο `sql/synthetic_data.sql`, το οποίο περιέχει τα `INSERT` statements για τα synthetic δεδομένα της εργασίας.
-
-### 4.3 Φόρτωση reference data
-
-Άνοιγμα MySQL/MariaDB prompt:
-
-```cmd
-C:\xampp\mysql\bin\mysql.exe -u root --local-infile=1 --default-character-set=utf8mb4 ygeiopolis_db
-```
-
-Έπειτα, μέσα στο MySQL prompt:
-
-```sql
-SET GLOBAL local_infile = 1;
-SOURCE C:/db_project/hospital_project/sql/load.sql;
-```
-
-> Πριν την εκτέλεση του `load.sql`, τα paths στις εντολές `LOAD DATA LOCAL INFILE` πρέπει να αντιστοιχούν στη θέση του project στον τοπικό υπολογιστή. Σε Windows προτείνεται χρήση forward slashes (`/`) στα paths του `SOURCE`.
-
-### 4.4 Φόρτωση synthetic data
-
-Αν το `SOURCE synthetic_data.sql` δεν εκτελείται μέσα από το `load.sql`, τότε το synthetic dataset φορτώνεται ξεχωριστά:
-
-```cmd
-C:\xampp\mysql\bin\mysql.exe -u root --default-character-set=utf8mb4 ygeiopolis_db < sql\synthetic_data.sql
-```
-
-Μετά τη φόρτωση, η βάση περιέχει τα reference data και τα synthetic data που απαιτούνται για την εκτέλεση των queries.
-
-### 4.5 Εκτέλεση των queries
-
-Παράδειγμα εκτέλεσης για το Q01:
-
-```cmd
-chcp 65001
-C:\xampp\mysql\bin\mysql.exe -u root --default-character-set=utf8mb4 ygeiopolis_db < sql\Q01.sql > sql\Q01_out.txt
-```
-
-Αντίστοιχα εκτελούνται τα υπόλοιπα queries `Q01.sql` έως `Q15.sql` και τα αποτελέσματα αποθηκεύονται στα `Q01_out.txt` έως `Q15_out.txt`.
-
-### 4.6 Εκτέλεση web UI
-
-Το project περιλαμβάνει απλό web UI σε PHP. Ο φάκελος `hospital_project` πρέπει να βρίσκεται μέσα στο `htdocs` του XAMPP.
-
-Παράδειγμα τοποθεσίας σε Windows:
-
-```text
-C:\xampp\htdocs\hospital_project
-```
-
-Παράδειγμα τοποθεσίας σε macOS:
-
-```text
-/Applications/XAMPP/xamppfiles/htdocs/hospital_project
-```
-
-Η εφαρμογή ανοίγει τοπικά από:
-
-```text
-http://localhost/hospital_project/web/index.php
-```
-
-
-
-## 5. Σχεδιαστικές Επιλογές & Παραδοχές
-
-| Α/Α | Παραδοχή | Αιτιολόγηση |
-|:|||
-| 1 | **Inheritance:** Table-per-subtype για `staff` → `doctor` / `nurse` / `admin_staff`. | Επιτρέπει διαφορετικά πεδία ανά υποτύπο και foreign keys που στοχεύουν σε συγκεκριμένη υποκλάση, π.χ. `procedure_occurrence.main_surgeon_amka` → `doctor.amka`. |
-| 2 | Self-referential σχέση στον πίνακα `doctor` μέσω του πεδίου `supervisor_amka`. | Μοντελοποιεί την ιεραρχία εποπτείας μεταξύ ιατρών. Το `ON DELETE RESTRICT` προστατεύει από διαγραφή supervisor που έχει υφισταμένους. |
-| 3 | Ξεχωριστή σχέση `department.director_amka` και ξεχωριστός πίνακας `doctor_department`. | Το `department.director_amka` αποτυπώνει τον διευθυντή του τμήματος, ενώ το `doctor_department` υλοποιεί τη σχέση M:N, καθώς ένας ιατρός μπορεί να ανήκει σε περισσότερα από ένα τμήματα. |
-| 4 | Χρήση surrogate keys (`INT AUTO_INCREMENT`) σε πίνακες όπου δεν υπάρχει σταθερό φυσικό κλειδί, και χρήση φυσικών κλειδιών όπου αυτά δίνονται από την εκφώνηση ή τα reference data. | Τα surrogate keys απλοποιούν τα joins και τη διαχείριση εγγραφών, ενώ φυσικά κλειδιά χρησιμοποιούνται σε περιπτώσεις όπως `amka`, `icd10_code`, `ken_code`, `procedure_code` και `drug_id`. |
-| 5 | Πεδία όπως `bed_type`, `status`, `shift_type`, `rank`, `staff_type` υλοποιούνται ως `VARCHAR` με `CHECK` constraints αντί για `ENUM`. | Η εκφώνηση απαγορεύει τη χρήση `ENUM`, άρα τα επιτρεπτά σύνολα τιμών επιβάλλονται με `CHECK` constraints. |
-| 6 | Το `drug_id` δημιουργείται ως εσωτερικό σειριακό ID της μορφής `D000001`, `D000002`, κ.λπ. | Το EMA Article 57 dataset δεν παρέχει πρακτικό μοναδικό product number για χρήση ως primary key. Η δημιουργία εσωτερικού ID δεν αλλοιώνει τους επίσημους ιατρικούς κωδικούς, καθώς οι ICD-10, ΚΕΝ και procedure codes διατηρούνται από τις επίσημες πηγές. |
-| 7 | Οι δραστικές ουσίες του EMA διαχωρίζονται μόνο με βάση τον χαρακτήρα `\|` και όχι με βάση το κόμμα. | Το `\|` λειτουργεί ως σαφής delimiter μεταξύ ουσιών, ενώ το κόμμα μπορεί να αποτελεί μέρος σύνθετης χημικής ονομασίας ή ονομασίας εκχυλίσματος. Η εκφώνηση επιτρέπει απλοποίηση ή partial matching για τις δραστικές ουσίες. |
-| 8 | Το EMA Article 57 φιλτράρεται ώστε να κρατηθούν φάρμακα εγκεκριμένα στην Ελλάδα. | Η βάση αφορά ελληνικό νοσοκομείο και το φιλτράρισμα μειώνει το reference dataset σε διαχειρίσιμο μέγεθος, διατηρώντας ρεαλιστικά δεδομένα για την εφαρμογή. |
-| 9 | Το `medical_procedure.name` ορίστηκε ως `VARCHAR(500)`. | Τα επίσημα ονόματα ιατρικών πράξεων είναι αρκετά μεγάλα, επομένως επιλέχθηκε μεγαλύτερο πεδίο από ένα απλό `VARCHAR(100)`, ώστε να αποφεύγεται απώλεια πληροφορίας κατά τη φόρτωση. |
-| 10 | Οι κατηγορίες ιατρικών πράξεων αντιστοιχίζονται στις κατηγορίες της εκφώνησης: χειρουργική, διαγνωστική, θεραπευτική. | Η εκφώνηση ζητά τρεις γενικές κατηγορίες πράξεων, άρα οι επίσημες κατηγορίες των reference data χαρτογραφούνται σε αυτές τις τιμές ώστε να υπάρχει ενιαίο μοντέλο. |
-| 11 | Οι τύποι εργαστηριακών εξετάσεων φορτώνονται από το `lab_exams.csv` στον πίνακα `lab_exam_type`. | Το `lab_exam_type` λειτουργεί ως reference table για τις εργαστηριακές εξετάσεις, ενώ ο πίνακας `lab_exam` περιέχει τις πραγματικές εξετάσεις που συνδέονται με νοσηλείες. |
-| 12 | Το `patient_contact` υλοποιείται ως ξεχωριστός πίνακας. | Η εκφώνηση αναφέρει οικείο(-α) άτομο(-α), άρα ένας ασθενής μπορεί να έχει περισσότερες από μία επαφές έκτακτης ανάγκης. Η κανονικοποίηση σε ξεχωριστό πίνακα αποφεύγει επαναλαμβανόμενες στήλες στον `patient`. |
-| 13 | Η ηλικία του ασθενούς αποθηκεύεται ως `INT` και όχι ως ημερομηνία γέννησης. | Η εκφώνηση ζητά ηλικία. Για απλότητα αποθηκεύεται απευθείας αριθμητική τιμή, ενώ σε παραγωγικό σύστημα θα μπορούσε να χρησιμοποιείται `date_of_birth` και να υπολογίζεται δυναμικά η ηλικία. |
-| 14 | Η σύνδεση `triage_record` → `hospitalization` γίνεται έμμεσα και όχι με άμεσο foreign key. | Ορισμένα περιστατικά triage οδηγούν σε νοσηλεία, ενώ άλλα αποχωρούν χωρίς εισαγωγή. Για τα σχετικά queries η σύνδεση μπορεί να προκύψει από τον ασθενή και τη χρονική ακολουθία άφιξης/εισαγωγής. |
-| 15 | Δεν υπάρχει άμεση σχέση `medical_procedure` → `department`. | Θεωρείται ότι μια πράξη μπορεί να εκτελεστεί από διαφορετικά τμήματα ανάλογα με τη νοσηλεία. Ο περιορισμός φυσικού χώρου αποτυπώνεται μέσω του `procedure_room`. |
-| 16 | Το `hospitalization.total_cost` υπολογίζεται κατά την παραγωγή των synthetic data. | Η λογική κόστους βασίζεται στο ΚΕΝ, στη μέση διάρκεια νοσηλείας και σε πρόσθετη χρέωση σε περίπτωση υπέρβασης. Η τιμή αποθηκεύεται για απλούστερα queries και επαναλήψιμα αποτελέσματα. |
-| 17 | Το rating υλοποιείται ως αξιολόγηση ανά νοσηλεία. | Ο πίνακας `rating` συνδέεται με το `hospitalization` και περιέχει τα επιμέρους κριτήρια αξιολόγησης. Για το Q4, η ποιότητα ιατρικής φροντίδας συσχετίζεται με τον `primary_doctor_amka` της νοσηλείας. |
-| 18 | Τα synthetic data περιλαμβάνουν “frequent flyers”: περίπου 15% των ασθενών έχουν προτιμώμενο τμήμα και 4–6 νοσηλείες σε αυτό. | Η παραδοχή εξασφαλίζει ότι το Q3, που ζητά ασθενείς με περισσότερες από 3 νοσηλείες στο ίδιο τμήμα, επιστρέφει ουσιαστικά αποτελέσματα. |
-| 19 | Παράγονται 800 νοσηλείες αντί για το ενδεικτικό ελάχιστο των 500. | Το μεγαλύτερο πλήθος νοσηλειών βοηθά ώστε να υπάρχουν αρκετά δεδομένα για queries ανά έτος, ανά τμήμα, για frequent hospitalizations και για ICD-10 κατηγορίες σε συνεχόμενα έτη. |
-| 20 | Παράγονται 100 νοσηλευτές, 30 διοικητικοί υπάλληλοι και 190 κλίνες. | Τα μεγέθη αυτά υποστηρίζουν 15 τμήματα, καθημερινές βάρδιες και αρκετές νοσηλείες χωρίς υπερβολικά μικρό ή άδειο dataset. |
-| 21 | Το πλήθος των `procedure_occurrence` είναι μεγαλύτερο από το ενδεικτικό ελάχιστο της εκφώνησης και ανέρχεται σε 286 εγγραφές. | Με περισσότερες επεμβάσεις δημιουργείται επαρκής διαφοροποίηση μεταξύ ιατρών, ώστε να επιστρέφουν meaningful αποτελέσματα τα Q5 και Q11. |
-| 22 | Για το Q11, ως “τρέχον έτος” χρησιμοποιείται το πιο πρόσφατο έτος με επαρκή αριθμό επεμβάσεων, δηλαδή το 2025. | Τα δεδομένα του 2026 είναι περιορισμένα, καθώς το synthetic dataset φτάνει μέχρι τις αρχές του 2026. Η παραδοχή τεκμηριώνεται μέσα στο αντίστοιχο query. |
-| 23 | Οι βάρδιες δημιουργούνται για μία ενδεικτική πλήρη εβδομάδα, 2/3/2026–8/3/2026, για όλα τα 15 τμήματα και για τις τρεις βάρδιες κάθε ημέρας. | Η εβδομάδα αυτή επαρκεί για την εκτέλεση των Q8 και Q12, χωρίς να δημιουργηθεί υπερβολικά μεγάλο πλήθος εγγραφών βαρδιών. |
-| 24 | Ο πλήρης έλεγχος κυκλικότητας στην ιεραρχία εποπτείας δεν υλοποιείται ως trigger. | Ένας πλήρης transitive cycle check θα απαιτούσε recursive λογική μέσα σε trigger, κάτι που είναι δύσχρηστο σε MariaDB. Το synthetic dataset παράγεται με rank-based supervision ώστε να μη δημιουργούνται κύκλοι εποπτείας. |
-| 25 | Οι κανόνες για μέγιστες βάρδιες ανά μήνα, ελάχιστη 8ωρη ανάπαυση, έως 3 συνεχόμενες νυχτερινές βάρδιες και παρουσία senior ιατρού όταν υπάρχει ειδικευόμενος ελέγχονται κυρίως από τον generator κατά την παραγωγή synthetic data. | Οι κανόνες αυτοί αφορούν σύνολα αναθέσεων και χρονικές σχέσεις μεταξύ πολλών εγγραφών. Κατά τη μαζική φόρτωση μπορεί να παρακάμπτονται προσωρινά triggers για λόγους σειράς εισαγωγής και απόδοσης, ενώ το `generate_data.py` παράγει δεδομένα που σέβονται τους περιορισμούς. |
-| 26 | Η ελάχιστη στελέχωση βάρδιας, δηλαδή τουλάχιστον 3 ιατροί, 6 νοσηλευτές και 2 διοικητικοί, αντιμετωπίζεται ως κανόνας δημιουργίας ομάδας εφημερίας. | Ο έλεγχος αυτός αφορά το σύνολο των αναθέσεων μιας βάρδιας και όχι μία μεμονωμένη εγγραφή `shift_assignment`, επομένως είναι πιο κατάλληλο να ελέγχεται από generator, stored procedure ή λογική εφαρμογής. |
-| 27 | Το `generate_data.py` χρησιμοποιεί σταθερό seed (`42`). | Έτσι η παραγωγή των synthetic data είναι deterministic και μπορεί να αναπαραχθεί από την αρχή με τα ίδια αποτελέσματα. |
-| 28 | Το web UI υλοποιείται ως απλή PHP εφαρμογή πάνω από τη MariaDB, χωρίς ORM. | Η εκφώνηση δεν επιτρέπει ORM. Το web UI λειτουργεί ως επίπεδο παρουσίασης για βασικές οντότητες και queries και είναι διαθέσιμο τοπικά στο `http://localhost/hospital_project/web/index.php`. |
-
-
-
-## 6. Πηγές Reference Δεδομένων
-
-| Reference Πίνακας | Πηγή | Περιγραφή |
-||||
-| `icd10_diagnosis` | Υπουργείο Υγείας | Κωδικοί ICD-10 και περιγραφές διαγνώσεων. |
-| `ken` | Υπουργείο Υγείας | Κλειστά Ενοποιημένα Νοσήλια, βασικό κόστος και μέση διάρκεια νοσηλείας. |
-| `medical_procedure` | Υπουργείο Υγείας (Κατηγορίες Α, Β) | Κωδικοποίηση ιατρικών πράξεων. |
-| `lab_exam_type` | Υπουργείο Υγείας (Κατηγορίες Γ, Δ, Ε) / επεξεργασμένο reference CSV | Τύποι εργαστηριακών εξετάσεων από το `lab_exams.csv`. |
-| `drug` | EMA Article 57 | Φάρμακα εγκεκριμένα για την Ελλάδα. |
-| `active_substance` | EMA Article 57 | Δραστικές ουσίες που εξήχθησαν από τα δεδομένα φαρμάκων. |
-| `drug_active_substance` | EMA Article 57 | Συσχέτιση φαρμάκων με δραστικές ουσίες. |
-
-Όλα τα reference αρχεία φορτώνονται μέσω `LOAD DATA LOCAL INFILE` στο `load.sql`.
-
-
-
-## 7. Indexes & Justification
-
-Τα indexes σχεδιάστηκαν με βάση τα 15 ζητούμενα queries της εκφώνησης, ώστε να επιταχύνονται τα συχνότερα joins, filters και groupings.
-
-| Index / Key | Πίνακας | Στήλες | Αιτιολόγηση |
-|||||
-| `idx_hosp_patient_amka` | `hospitalization` | `patient_amka` | Q3, Q6, Q9 — αναζήτηση νοσηλειών ανά ασθενή. |
-| `idx_hosp_dept_admission_date` | `hospitalization` | `department_id`, `admission_date` | Q1 — group by τμήμα και έτος. |
-| `idx_hosp_primary_doctor` | `hospitalization` | `primary_doctor_amka` | Q4 — μέσος όρος αξιολογήσεων ανά ιατρό. |
-| `idx_hosp_ken_code` | `hospitalization` | `ken_code` | Q1 — ανάλυση εσόδων ανά ΚΕΝ. |
-| `idx_proc_occ_surgeon_amka` | `procedure_occurrence` | `main_surgeon_amka` | Q2, Q5, Q11 — επεμβάσεις ανά κύριο χειρουργό. |
-| `idx_proc_occ_start_datetime` | `procedure_occurrence` | `start_datetime` | Q11 — φιλτράρισμα επεμβάσεων ανά έτος. |
-| `idx_shift_date_dept` | `shift` | `shift_date`, `department_id` | Q8, Q12 — βάρδιες ανά ημερομηνία και τμήμα. |
-| `idx_shift_assignment_staff_amka` | `shift_assignment` | `staff_amka` | Q2, Q8 — συμμετοχή προσωπικού σε βάρδιες. |
-| `idx_doctor_supervisor_amka` | `doctor` | `supervisor_amka` | Q13 — recursive supervisor chain. |
-| `idx_doctor_specialty` | `doctor` | `specialty` | Q2 — αναζήτηση ιατρών ανά ειδικότητα. |
-| `idx_triage_urgency_arrival` | `triage_record` | `urgency_level`, `arrival_time` | Q15 — ομαδοποίηση ανά επίπεδο επείγοντος και FIFO λογική. |
-| `idx_patient_allergy_substance_id` | `patient_allergy` | `substance_id` | Q7 — αλλεργικοί ασθενείς ανά δραστική ουσία. |
-| `uq_rating_hosp` | `rating` | `hospitalization_id` | Q4, Q6 — εξασφαλίζει 1 αξιολόγηση ανά νοσηλεία και γρήγορο join. |
-| `uq_prescription_combo` | `prescription` | `doctor_amka`, `patient_amka`, `drug_id`, `start_date` | Καλύπτει τον περιορισμό μοναδικότητας συνταγογράφησης της εκφώνησης και βοηθά στο Q10. |
-
-
-
-## 8. Triggers & Business Rules
-
-Στο `install.sql` ορίζονται triggers και constraints για την επιβολή βασικών επιχειρησιακών κανόνων της βάσης.
-
-| Trigger / Κανόνας | Σκοπός |
-|||
-| `trg_doctor_insert_rank_supervisor` | Κατά την εισαγωγή ιατρού ελέγχει ότι οι ειδικευόμενοι έχουν supervisor και οι διευθυντές δεν έχουν supervisor. |
-| `trg_doctor_update_rank_supervisor` | Εφαρμόζει τον ίδιο κανόνα κατά την ενημέρωση ιατρού. |
-| `trg_prescription_allergy_check` | Απαγορεύει συνταγογράφηση φαρμάκου όταν ο ασθενής έχει αλλεργία σε δραστική ουσία του φαρμάκου. |
-| `trg_rating_only_discharged` | Επιτρέπει αξιολόγηση μόνο για ολοκληρωμένη νοσηλεία, δηλαδή μετά την έξοδο του ασθενή. |
-| `trg_procedure_room_overlap` | Αποτρέπει χρονική επικάλυψη επεμβάσεων στον ίδιο χώρο. |
-| `trg_procedure_surgeon_overlap` | Αποτρέπει την ταυτόχρονη συμμετοχή του ίδιου κύριου χειρουργού σε δύο επεμβάσεις. |
-
-### Κανόνες που ελέγχονται κυρίως από generator ή stored procedure
-
-Ορισμένοι κανόνες αφορούν σύνολο εγγραφών και όχι μία μεμονωμένη εισαγωγή. Για αυτόν τον λόγο ελέγχονται κυρίως κατά την παραγωγή των synthetic data ή από τη λογική της εφαρμογής.
-
-| Κανόνας | Τρόπος αντιμετώπισης |
-|||
-| Απαγόρευση κυκλικής ιεραρχίας εποπτείας | Το `generate_data.py` παράγει rank-based supervision χωρίς κύκλους. |
-| Μέγιστες βάρδιες ανά μήνα | Ελέγχεται από τον generator κατά την παραγωγή βαρδιών. |
-| Ελάχιστη 8ωρη ανάπαυση μεταξύ βαρδιών | Ελέγχεται από τον generator. |
-| Μέγιστο 3 συνεχόμενες νυχτερινές βάρδιες | Ελέγχεται από τον generator. |
-| Ελάχιστη στελέχωση βάρδιας με 3 ιατρούς, 6 νοσηλευτές και 2 διοικητικούς | Ο generator δημιουργεί κατάλληλες ομάδες εφημερίας. Μπορεί επίσης να ελεγχθεί μέσω stored procedure όταν οι αναθέσεις βαρδιών γίνονται από την εφαρμογή και όχι με direct bulk inserts. |
-| Παρουσία Επιμελητή Α΄ ή Διευθυντή όταν συμμετέχει ειδικευόμενος | Ελέγχεται κατά την παραγωγή των shift assignments. |
-
-> Σημείωση: Κατά τη μαζική φόρτωση δεδομένων, ορισμένοι triggers μπορεί να απενεργοποιούνται προσωρινά ώστε να μη δημιουργούνται προβλήματα σειράς εισαγωγής και απόδοσης. Το τελικό dataset έχει παραχθεί έτσι ώστε να σέβεται τους αντίστοιχους κανόνες.
-
-
-
-## 9. Synthetic Data Generation
-
-Το αρχείο `code/generate_data.py` παράγει synthetic data για όλους τους μη-reference πίνακες.
-
-Χρησιμοποιείται σταθερό seed `42`, ώστε τα δεδομένα να είναι deterministic και reproducible.
-
-### Volumes
-
-| Πίνακας | Records |
-||:|
-| `staff` | 210 |
-| `doctor` | 80 |
-| `nurse` | 100 |
-| `admin_staff` | 30 |
-| `department` | 15 |
-| `patient` | 200 |
-| `hospitalization` | 800 |
-| `triage_record` | 1100 |
-| `prescription` | 300 |
-| `procedure_occurrence` | 286 |
-| `procedure_participation` | 516 |
-| `lab_exam` | 200 |
-| `rating` | 569 |
-| `shift` | 315 |
-| `shift_assignment` | 1660 |
-| `patient_allergy` | 84 |
-| `patient_contact` | 261 |
-| `bed` | 190 |
-
-### Πώς το generator τηρεί τους βασικούς κανόνες
-
-- **Allergies vs Prescriptions:** Πριν εισαχθεί συνταγή, ελέγχεται αν το φάρμακο περιέχει δραστική ουσία στην οποία είναι αλλεργικός ο ασθενής. Αν υπάρχει σύγκρουση, η συνταγή παραλείπεται.
-- **Doctor Supervision:** Οι ειδικευόμενοι λαμβάνουν supervisor από ανώτερη βαθμίδα. Οι διευθυντές δεν έχουν supervisor.
-- **Procedure Conflicts:** Πριν εισαχθεί επέμβαση, ελέγχεται αν υπάρχει χρονική επικάλυψη στο ίδιο room ή στον ίδιο κύριο χειρουργό.
-- **Shift Constraints:** Παρακολουθούνται ανά μέλος προσωπικού οι βάρδιες, ώστε να αποφεύγονται υπερβάσεις στα όρια, ελλιπής ανάπαυση και πάνω από 3 συνεχόμενες νυχτερινές βάρδιες.
-- **Frequent Flyers:** Δημιουργούνται ασθενείς με επαναλαμβανόμενες νοσηλείες στο ίδιο τμήμα, ώστε το Q3 να επιστρέφει αποτελέσματα.
-
-
-
-## 10. Επιλογές για κάθε Query
-
-Τα 15 SQL queries βρίσκονται στον φάκελο `sql/` ως `Q01.sql` έως `Q15.sql`. Για κάθε query υπάρχει αντίστοιχο output file `QXX_out.txt`.
-
-| Query | Παράμετρος / Επιλογή | Τιμή | Αιτιολόγηση |
-|||||
-| Q01 | Έσοδα ανά τμήμα / έτος / ΚΕΝ | Όλα τα δεδομένα | Ζητείται συνολική ανάλυση εσόδων. |
-| Q02 | Ειδικότητα | `Καρδιολογία` | Υπάρχουν αρκετοί ιατροί στο dataset. |
-| Q03 | Frequent hospitalizations | >3 νοσηλείες στο ίδιο τμήμα | Υποστηρίζεται από τα synthetic frequent flyers. |
-| Q04 | Doctor AMKA | `89830289645` | Επιλέχθηκε ιατρός με αρκετές νοσηλείες και ratings. |
-| Q05 | Νέοι ιατροί | ηλικία < 35 | Σύμφωνα με το ζητούμενο της εκφώνησης. |
-| Q06 | Patient AMKA | `99342011154` | Επιλέχθηκε ασθενής με πλούσιο ιστορικό νοσηλειών. |
-| Q07 | Δραστικές ουσίες | Όλες | Ζητείται ταξινόμηση με βάση αλλεργικούς ασθενείς. |
-| Q08 | Date / Department | `2026-03-02` / Καρδιολογία | Ημερομηνία εντός της εβδομάδας βαρδιών. |
-| Q09 | Διάρκεια νοσηλείας | >15 ημέρες | Σύμφωνα με την εκφώνηση. |
-| Q10 | Top-3 ζεύγη ουσιών | Όλα τα prescriptions | Υπολογίζεται συχνότητα συνταγογράφησης ζευγών. |
-| Q11 | Reference year | 2025 | Πιο πρόσφατο έτος με επαρκή αριθμό επεμβάσεων. |
-| Q12 | Week | 2026-03-02 έως 2026-03-08 | Η εβδομάδα για την οποία έχουν δημιουργηθεί shifts. |
-| Q13 | Ιεραρχία εποπτείας | Recursive CTE | Χρειάζεται για αλυσίδα supervisors. |
-| Q14 | Min cases | 5 | Όπως ζητείται από την εκφώνηση. |
-| Q15 | Triage stats | Όλα τα urgency levels | Επιστρέφει κατανομή και μέσο χρόνο αναμονής. |
-
-### Q4 & Q6: EXPLAIN / FORCE INDEX
-
-Για τα Q4 και Q6 υπάρχουν επιπλέον αναλύσεις στο `docs/report_db.pdf`.
-
-Παρουσιάζονται:
-
-1. Το βασικό query.
-2. Το αποτέλεσμα `EXPLAIN` / `EXPLAIN ANALYZE`.
-3. Εναλλακτική έκδοση με `FORCE INDEX`.
-4. Σύγκριση εκτιμώμενου κόστους και χρόνου εκτέλεσης.
-5. Σύντομη ανάλυση συμπερασμάτων.
-
-Συνοπτικά, και στα δύο queries ο optimizer επιλέγει ήδη κατάλληλο index χωρίς να απαιτείται `FORCE INDEX`.
-
-
-
-## 11. Web UI
-
-Η εργασία περιλαμβάνει απλό web UI σε PHP, διαθέσιμο τοπικά στη διεύθυνση:
-
-```text
-http://localhost/hospital_project/web/index.php
-```
-
-Το web UI δεν χρησιμοποιεί ORM και συνδέεται απευθείας με τη MariaDB μέσω του αρχείου `web/db.php`.
-
-Οι βασικές σελίδες του web UI είναι:
-
-| Αρχείο | Περιγραφή |
-|||
-| `index.php` | Αρχική σελίδα της εφαρμογής. |
-| `about.php` | Πληροφορίες για τη βάση και την εργασία. |
-| `doctors.php` | Προβολή ιατρών. |
-| `patients.php` | Προβολή ασθενών. |
-| `hospitalizations.php` | Προβολή νοσηλειών. |
-| `lab_exams.php` | Προβολή εργαστηριακών εξετάσεων. |
-| `prescriptions.php` | Προβολή συνταγογραφήσεων. |
-| `shifts.php` | Προβολή βαρδιών. |
-| `queries.php` | Σελίδα παρουσίασης βασικών queries. |
-| `queries_full.php` | Σελίδα παρουσίασης όλων των SQL queries. |
-
-Το web UI λειτουργεί ως επιπλέον επίπεδο παρουσίασης της βάσης και βοηθά στην επίδειξη της λειτουργικότητας της εφαρμογής.
-
-
-
-## 12. Χρήση Εργαλείων AI
-
-Κατά την εκπόνηση της εργασίας χρησιμοποιήθηκε εργαλείο Τεχνητής Νοημοσύνης ως βοηθός ανάπτυξης και τεκμηρίωσης.
-
-Η χρήση AI αφορούσε:
-
-- Συζήτηση σχεδιαστικών επιλογών για το schema σε μερικά λεπτά σημεία.
-- Βοήθεια στη συγγραφή και διόρθωση συγκεκριμένων SQL queries.
-- Καθαρισμός των xls αρχείων του Υπ. Υγείας και του EMA Article 57 (μέσω LibreOffice + Python preprocessing)
-- Βοήθεια στη δημιουργία synthetic data generator.
-- Debugging ζητημάτων με encoding, collation, paths και loading.
-
-Όλος ο κώδικας, τα SQL scripts και τα outputs ελέγχθηκαν και εκτελέστηκαν χειροκίνητα από την ομάδα πριν την παράδοση. Το AI χρησιμοποιήθηκε ως βοηθητικό εργαλείο και όχι ως αυτόνομος δημιουργός της εργασίας.
-
-
-
-## 13. Επίλογος
-
-Η βάση δεδομένων καλύπτει το σύνολο των βασικών απαιτήσεων της εκφώνησης:
-
-- Υλοποίηση πλήρους σχεσιακού σχήματος.
-- Χρήση primary keys, foreign keys, unique constraints, check constraints και indexes.
-- Φόρτωση reference δεδομένων από εξωτερικές πηγές.
-- Παραγωγή synthetic data με deterministic τρόπο.
-- Υλοποίηση 15 SQL queries με αντίστοιχα output files.
-- Ανάλυση `EXPLAIN` / `FORCE INDEX` για Q4 και Q6.
-- Δημιουργία web UI για παρουσίαση βασικών οντοτήτων και queries.
-
-Η εργασία είναι οργανωμένη ώστε να μπορεί να εκτελεστεί τοπικά σε περιβάλλον XAMPP/MariaDB και να παρουσιαστεί κατά την επίδειξη του μαθήματος.
+## Running it locally
+
+**Requirements:** XAMPP (MariaDB 10.4+, Apache, PHP) and Python 3.8+.
+
+1. **Create the schema.** Run this from the repository root, using `cmd`:
+   ```cmd
+   C:\xampp\mysql\bin\mysql.exe -u root < sql\install.sql
+   ```
+2. **(Optional) Regenerate the synthetic data:**
+   ```cmd
+   python code\generate_data.py --data-dir sql\data --out sql\synthetic_data.sql
+   ```
+3. **Load the data.** First update the file paths inside `sql/load.sql` to your local folder. Then run:
+   ```cmd
+   C:\xampp\mysql\bin\mysql.exe -u root --local-infile=1 --default-character-set=utf8mb4 ygeiopolis_db
+   ```
+   ```sql
+   SET GLOBAL local_infile = 1;
+   SOURCE C:/xampp/htdocs/hospital-database/sql/load.sql;
+   ```
+4. **Run a query:**
+   ```cmd
+   C:\xampp\mysql\bin\mysql.exe -u root --default-character-set=utf8mb4 ygeiopolis_db < sql\Q01.sql
+   ```
+5. **Open the web UI.** Place the repository in `C:\xampp\htdocs\`, start Apache and MySQL, and visit
+   `http://localhost/hospital-database/code/web/index.php`
+
+## Documentation
+
+- [`docs/README_el.md`](docs/README_el.md) covers the design decisions, the reasoning behind each index, the triggers and the parameters of every query (in Greek).
+- [`docs/report.pdf`](docs/report.pdf) is the full project report, including the `EXPLAIN` analysis (in Greek).
+
+All personal data in this repository is synthetic.
